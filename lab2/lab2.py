@@ -7,6 +7,7 @@ from threading import Thread, Lock
 
 from sense_hat import SenseHat
 
+#############################################################################################################################
 URL = "mqtt20.iik.ntnu.no"
 MQTT_PORT = 1883
 HUMIDITY_SUBSCRIBER_TOPIC = "ttm4115/group1/+/humidity"
@@ -16,42 +17,6 @@ STATUS_SUBSCRIBER_TOPIC = "ttm4115/group1/+/status"
 STATUS_PUBLISH_TOPIC = lambda id : f"ttm4115/group1/{id}/status"
 FIX_TOPIC = "ttm4115/group1/fix"
 
-# random numbers because why not
-STATUS_CONNECTING = 40
-STATUS_OPERATIONAL = 63
-STATUS_DISCONNECTED = 86
-STATUS_SENSOR_FAIL = 109
-
-NETWORK_FAIL_PROBABILITY = 0.1
-SENSOR_FAIL_PROBABILITY = 0.1
-REPAIR_RATE = 0.5
-
-TIMEOUT = 5
-
-#############################################################################################################################
-_pixel_buffer = [(0, 0, 0)] * 64  
-_buffer_lock = Lock()
-colors = {
-    STATUS_CONNECTING: (255, 255, 255),   # White
-    STATUS_OPERATIONAL: (0, 255, 0),      # Green
-    STATUS_DISCONNECTED: (255, 255, 0),   # Yellow
-    STATUS_SENSOR_FAIL: (255, 0, 0),      # Red
-}
-def show_status(i, k):
-    assert(k in colors.keys())
-    sense = SenseHat()
-    
-    color = [c//2 for c in colors.get(k, None)]
-
-    column = i-1
-    with _buffer_lock:
-        for row in range(8):
-            idx = row * 8 + 2*column
-            _pixel_buffer[idx] = color
-            idx = row * 8 + 2*column + 1
-            _pixel_buffer[idx] = color
-    sense.set_pixels(_pixel_buffer)
-#############################################################################################################################
 class MQTT_Connection:
     def __init__(self,id, connect_callback=None, message_callback=None):
         self.broker = URL
@@ -70,8 +35,23 @@ class MQTT_Connection:
             self.client.on_message = message_callback
         if connect_callback != None:
             self.client.on_connect = connect_callback
+    def connect(self):
+        return self.client.connect(self.broker, self.port, 60) == 0
 
 #############################################################################################################################
+## Constants
+# random numbers because why not
+STATUS_CONNECTING = 40
+STATUS_OPERATIONAL = 63
+STATUS_DISCONNECTED = 86
+STATUS_SENSOR_FAIL = 109
+
+NETWORK_FAIL_PROBABILITY = 0.1
+SENSOR_FAIL_PROBABILITY = 0.1
+REPAIR_RATE = 0.5
+
+TIMEOUT = 5
+
 def humidity_sensor(id): # Sensor Thread
     mqtt_connection = None
     def random_failure_maybe(mqtt_connection):
@@ -142,7 +122,7 @@ def humidity_sensor(id): # Sensor Thread
 
         # Connecting
         elif mqtt_connection.status == STATUS_CONNECTING:
-            if mqtt_connection.client.connect(mqtt_connection.broker, mqtt_connection.port, 60) == 0:
+            if mqtt_connection.connect():
                 mqtt_connection.status = STATUS_OPERATIONAL 
                 print(f"Node {id} connection success")
                 continue
@@ -154,7 +134,7 @@ def humidity_sensor(id): # Sensor Thread
 #############################################################################################################################
 def fixer_thread(): # This thread emulates surveillance test
     mqtt_connection = MQTT_Connection(None)
-    mqtt_connection.client.connect(mqtt_connection.broker, mqtt_connection.port, 60)
+    mqtt_connection.connect()
     while (True):
         error = mqtt_connection.client.publish(FIX_TOPIC, 'You are now fixed!')
         sleep(10)
@@ -169,14 +149,36 @@ def aggregator(): # Reads messages and contains the final 2oo3/2oo4 aggregation 
     def message_received_callback(client, userdata, m):
         print(f"I received a message {m.payload} from {m.topic}")
 
-    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    mqtt_connection = MQTT_Connection(
+        '+', 
+        connect_callback=connected_callback,
+        message_callback=message_received_callback
+    )
+    mqtt_connection.connect()
+    mqtt_connection.client.loop_forever()
+#############################################################################################################################
+_pixel_buffer = [(0, 0, 0)] * 64  
+_buffer_lock = Lock()
+colors = {
+    STATUS_CONNECTING: (255, 255, 255),   # White
+    STATUS_OPERATIONAL: (0, 255, 0),      # Green
+    STATUS_DISCONNECTED: (255, 255, 0),   # Yellow
+    STATUS_SENSOR_FAIL: (255, 0, 0),      # Red
+}
+def show_status(i, k):
+    assert(k in colors.keys())
+    sense = SenseHat()
+    
+    color = [c//2 for c in colors.get(k, None)]
 
-    mqtt_client.on_connect = connected_callback
-    mqtt_client.on_message = message_received_callback
-
-    mqtt_client.connect(URL, 1883, 60)
-
-    mqtt_client.loop_forever()
+    column = i-1
+    with _buffer_lock:
+        for row in range(8):
+            idx = row * 8 + 2*column
+            _pixel_buffer[idx] = color
+            idx = row * 8 + 2*column + 1
+            _pixel_buffer[idx] = color
+    sense.set_pixels(_pixel_buffer)
 #############################################################################################################################
 if __name__ == '__main__':
     for id in range (1,5):

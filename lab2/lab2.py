@@ -40,7 +40,6 @@ class MQTT_Connection:
 
 #############################################################################################################################
 ## Constants
-# random numbers because why not
 STATUS_CONNECTING = 40
 STATUS_OPERATIONAL = 63
 STATUS_DISCONNECTED = 86
